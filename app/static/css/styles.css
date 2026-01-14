@@ -1,0 +1,31 @@
+.bg-soft { background: #f6f7fb; }
+
+.dropzone {
+  border: 1.5px dashed rgba(0,0,0,.18);
+  background: white;
+  padding: 16px;
+  transition: 150ms ease;
+}
+.dropzone.dragover {
+  border-color: rgba(13,110,253,.6);
+  box-shadow: 0 0 0 4px rgba(13,110,253,.08);
+}
+.dropzone .icon { font-size: 22px; }
+
+.reply-box {
+  background: #0b1220;
+  color: #e7eaf0;
+  overflow: auto;
+  max-height: 260px;
+}
+.reply-box pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.92rem;
+}
+
+.empty-state {
+  background: white;
+  border: 1px solid rgba(0,0,0,.06);
+}

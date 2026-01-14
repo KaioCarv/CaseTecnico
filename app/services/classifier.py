@@ -18,28 +18,49 @@ class ClassificationResult:
 
 
 def _ensure_nltk():
-    """
-    Garante stopwords no runtime (especialmente em deploy).
-    """
-    try:
-        import nltk
-        from nltk.corpus import stopwords  # noqa
-        _ = stopwords.words("portuguese")
-    except Exception:
-        import nltk
-        nltk.download("stopwords")
+    import os
+    import nltk
+    from nltk.corpus import stopwords
 
+    # guarda dados em /tmp (local gravável no serverless)
+    nltk_data_dir = os.environ.get("NLTK_DATA", "/tmp/nltk_data")
+    os.makedirs(nltk_data_dir, exist_ok=True)
+
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
+
+    try:
+        _ = stopwords.words("portuguese")
+    except LookupError:
+        nltk.download("stopwords", download_dir=nltk_data_dir)
+
+
+_model_cache = None
 
 def _load_or_train_model():
+    global _model_cache
+    if _model_cache is not None:
+        return _model_cache
+
+    # tenta carregar se existir
     if os.path.exists(MODEL_PATH):
         try:
-            return joblib.load(MODEL_PATH)
+            _model_cache = joblib.load(MODEL_PATH)
+            return _model_cache
         except Exception:
-            pass  # modelo inválido/corrompido -> re-treina
+            pass
 
+    # treina em runtime e usa cache em memória
     from train import train_and_save
-    train_and_save(MODEL_PATH)
-    return joblib.load(MODEL_PATH)
+    try:
+        train_and_save(MODEL_PATH)          # tenta salvar se der
+        _model_cache = joblib.load(MODEL_PATH)
+    except Exception:
+        # se não conseguir salvar (serverless), treina e retorna o pipeline direto
+        _model_cache = train_and_save(None)  # vou te mostrar abaixo
+
+    return _model_cache
+
 
 
 

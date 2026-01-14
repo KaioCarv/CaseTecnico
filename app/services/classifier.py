@@ -1,91 +1,47 @@
-import os
+import re
 from dataclasses import dataclass
 from typing import Optional, Dict
-
-import joblib
-
-from .nlp import normalize, preprocess_for_ml
 from .llm import llm_classify_and_reply
-
-MODEL_PATH = os.getenv("MODEL_PATH", "models/email_clf.joblib")
+from .nlp import normalize
 
 @dataclass
 class ClassificationResult:
-    category: str               # "Produtivo" | "Improdutivo"
-    confidence: int             # 0-100
-    method: str                 # "llm" | "ml"
+    category: str
+    confidence: int
+    method: str
     hints: Optional[Dict] = None
 
+def _heuristic_classify(text: str) -> ClassificationResult:
+    t = normalize(text)
 
-def _ensure_nltk():
-    import os
-    import nltk
-    from nltk.corpus import stopwords
+    productive_patterns = [
+        r"\b(status|andamento|atualiza|previs[aã]o|prazo|follow[- ]?up)\b",
+        r"\b(erro|bug|falha|problema|não funciona|nao funciona|instável|instavel)\b",
+        r"\b(suporte|ajuda|chamado|ticket|requisi[cç][aã]o)\b",
+        r"\b(anexo|arquivo|segue|documento|planilha)\b",
+    ]
+    unproductive_patterns = [
+        r"\b(feliz natal|feliz ano|boas festas|parab[eé]ns|obrigad|valeu|agradec)\b",
+        r"\b(bom dia|boa tarde|boa noite)\b",
+    ]
 
-    # guarda dados em /tmp (local gravável no serverless)
-    nltk_data_dir = os.environ.get("NLTK_DATA", "/tmp/nltk_data")
-    os.makedirs(nltk_data_dir, exist_ok=True)
+    if any(re.search(p, t) for p in productive_patterns):
+        return ClassificationResult("Produtivo", 75, "heuristic")
 
-    if nltk_data_dir not in nltk.data.path:
-        nltk.data.path.append(nltk_data_dir)
+    if any(re.search(p, t) for p in unproductive_patterns):
+        return ClassificationResult("Improdutivo", 75, "heuristic")
 
-    try:
-        _ = stopwords.words("portuguese")
-    except LookupError:
-        nltk.download("stopwords", download_dir=nltk_data_dir)
-
-
-_model_cache = None
-
-def _load_or_train_model():
-    global _model_cache
-    if _model_cache is not None:
-        return _model_cache
-
-    # tenta carregar se existir
-    if os.path.exists(MODEL_PATH):
-        try:
-            _model_cache = joblib.load(MODEL_PATH)
-            return _model_cache
-        except Exception:
-            pass
-
-    # treina em runtime e usa cache em memória
-    from train import train_and_save
-    try:
-        train_and_save(MODEL_PATH)          # tenta salvar se der
-        _model_cache = joblib.load(MODEL_PATH)
-    except Exception:
-        # se não conseguir salvar (serverless), treina e retorna o pipeline direto
-        _model_cache = train_and_save(None)  # vou te mostrar abaixo
-
-    return _model_cache
-
-
-
+    # default conservador
+    return ClassificationResult("Produtivo", 55, "heuristic")
 
 def classify_email(email_text: str) -> ClassificationResult:
-    _ensure_nltk()
     raw = normalize(email_text)
+    raw_for_llm = raw[:8000]  # evita PDF gigante
 
-    # 1) Tenta LLM (se houver chave)
-    llm_out = llm_classify_and_reply(raw)
+    llm_out = llm_classify_and_reply(raw_for_llm)
     if llm_out:
         cat = "Produtivo" if llm_out.get("category") == "Produtivo" else "Improdutivo"
         conf = int(max(0, min(100, llm_out.get("confidence", 75))))
         return ClassificationResult(category=cat, confidence=conf, method="llm", hints={"llm_reply": llm_out.get("reply", "")})
 
-    # 2) Fallback ML local
-    model = _load_or_train_model()
-    x = preprocess_for_ml(raw)
-
-    proba = model.predict_proba([x])[0]
-    # Classes ordenadas conforme model.classes_
-    classes = list(model.classes_)
-    idx_prod = classes.index("Produtivo") if "Produtivo" in classes else 0
-
-    p_prod = float(proba[idx_prod])
-    category = "Produtivo" if p_prod >= 0.5 else "Improdutivo"
-    confidence = int(round(max(p_prod, 1 - p_prod) * 100))
-
-    return ClassificationResult(category=category, confidence=confidence, method="ml")
+    return _heuristic_classify(raw)
